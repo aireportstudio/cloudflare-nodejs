@@ -1,9 +1,7 @@
-import redis from '../db/redisClient';
+import redis from "../db/redisClient";
 
-const BLOG_LIST_KEY = 'blogs';
-
-export interface Blog {
-  id: string;
+interface Blog {
+  id: number;
   slug: string;
   title: string;
   description: string;
@@ -17,61 +15,42 @@ export interface Blog {
   content: string;
 }
 
-// Helper: ensure id is a valid non-empty string or convertible to string
-function ensureStringId(id: unknown): string {
-  if (typeof id === 'string' && id.trim() !== '') {
-    return id;
-  } else if (id != null && typeof id.toString === 'function') {
-    const str = id.toString();
-    if (str.trim() !== '') return str;
-  }
-  throw new TypeError('Invalid id: must be a non-empty string or convertible to string');
-}
+let blogs: Blog[] = [];
+let nextId = 1;
 
 export default {
-  getAll: async (): Promise<Blog[]> => {
-    const ids = (await redis.lrange(BLOG_LIST_KEY, 0, -1)) as string[] | null;
-    if (!ids || ids.length === 0) return [];
-
-    const pipeline = redis.pipeline();
-    ids.forEach(id => {
-      pipeline.get(`blog:${String(id)}`);
-    });
-    const results = await pipeline.exec();
-
-    return (results as Array<[any, string | null]>)
-      .map(([err, val]) => (val ? JSON.parse(val) : null))
-      .filter((b): b is Blog => b !== null);
-  },
-
-  getById: async (id: string): Promise<Blog | null> => {
-    const validId = ensureStringId(id);
-    const data: any = await redis.get(`blog:${validId}`);
-    return data ? JSON.parse(data) : null;
-  },
-
-  create: async (blog: Omit<Blog, 'id'>): Promise<Blog> => {
-    const id = Date.now().toString();
-    const newBlog = { id, ...blog };
-    await redis.set(`blog:${id}`, JSON.stringify(newBlog));
-    await redis.lpush(BLOG_LIST_KEY, id);
-    return newBlog;
-  },
-
-  update: async (id: string, data: Partial<Omit<Blog, 'id'>>): Promise<Blog | null> => {
-    const validId = ensureStringId(id);
-    const existing: any = await redis.get(`blog:${validId}`);
-    if (!existing) return null;
-
-    const blog = { ...JSON.parse(existing), ...data };
-    await redis.set(`blog:${validId}`, JSON.stringify(blog));
+  getAll: (): Blog[] => blogs,
+  getById: (id: number): Blog | undefined => blogs.find(b => b.id === id),
+  create: (data: Omit<Blog, 'id'>): Blog => {
+    const blog = { id: nextId++, ...data };
+    blogs.push(blog);
+    redis.set(`blog:${blog.id}`, JSON.stringify(blog));
     return blog;
   },
+  update: async (id: string, data: Partial<Omit<Blog, 'id'>>): Promise<Blog | null> => {
+    // Fetch existing blog from Redis
+    const json: any = await redis.get(`blog:${id}`);
+    if (!json) return null;
 
+    // Parse JSON to object
+    const blog: Blog = JSON.parse(json);
+
+    // Merge and update fields
+    Object.assign(blog, data);
+
+    // Save back updated blog object as JSON string to Redis
+    await redis.set(`blog:${id}`, JSON.stringify(blog));
+
+    return blog;
+  },
   delete: async (id: string): Promise<boolean> => {
-    const validId = ensureStringId(id);
-    const removed = await redis.del(`blog:${validId}`);
-    await redis.lrem(BLOG_LIST_KEY, 0, validId);
+    // Delete blog data key
+    const removed = await redis.del(`blog:${id}`);
+
+    // Remove blog ID from the blog list
+    await redis.lrem('blogs', 0, id);
+
+    // removed is number of keys deleted (0 or 1)
     return removed > 0;
   }
 };
