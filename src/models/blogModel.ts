@@ -1,5 +1,3 @@
-import redis from "../db/redisClient";
-
 interface Blog {
   id: number;
   slug: string;
@@ -24,33 +22,21 @@ export default {
   create: (data: Omit<Blog, 'id'>): Blog => {
     const blog = { id: nextId++, ...data };
     blogs.push(blog);
-    redis.set(`blog:${blog.id}`, JSON.stringify(blog));
     return blog;
   },
-  update: async (id: string, data: Partial<Omit<Blog, 'id'>>): Promise<Blog | null> => {
-    // Fetch existing blog from Redis
-    const json: any = await redis.get(`blog:${id}`);
-    if (!json) return null;
-
-    // Parse JSON to object
-    const blog: Blog = JSON.parse(json);
-
-    // Merge and update fields
-    Object.assign(blog, data);
-
-    // Save back updated blog object as JSON string to Redis
-    await redis.set(`blog:${id}`, JSON.stringify(blog));
-
+  update: (id: number, data: Partial<Omit<Blog, 'id'>>): Blog | undefined => {
+    const blog = blogs.find(b => b.id === id);
+    if (blog) {
+      Object.assign(blog, data);
+    }
     return blog;
   },
-  delete: async (id: string): Promise<boolean> => {
-    // Delete blog data key
-    const removed = await redis.del(`blog:${id}`);
-
-    // Remove blog ID from the blog list
-    await redis.lrem('blogs', 0, id);
-
-    // removed is number of keys deleted (0 or 1)
-    return removed > 0;
+  delete: (id: number): boolean => {
+    const index = blogs.findIndex(b => b.id === id);
+    if (index !== -1) {
+      blogs.splice(index, 1);
+      return true;
+    }
+    return false;
   }
 };
