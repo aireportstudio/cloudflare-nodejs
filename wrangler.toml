@@ -11,3 +11,5 @@ compatibility_flags = [
 
 workers_dev = true
 preview_urls = true
+[[build.esbuild]]
+external = ["@aws-sdk/*"]
