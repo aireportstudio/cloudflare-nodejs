@@ -7,7 +7,28 @@ import { uploadToR2, deleteFromR2 } from '../utils/r2Client';
 const blogModel = createBlogModel();
 let tableCreated = false;
 
-// Ensure table exists
+// ------------------- Helper to parse tags -------------------
+function parseTags(tags: unknown): string[] {
+  if (!tags) return [];
+
+  if (typeof tags === 'string') {
+    // Try JSON parse first
+    try {
+      const parsed = JSON.parse(tags);
+      if (Array.isArray(parsed)) return parsed.map(t => String(t));
+    } catch {
+      // Ignore JSON errors
+    }
+    // Fallback: comma-separated string
+    return tags.split(',').map((t: string) => t.trim()).filter(Boolean);
+  }
+
+  if (Array.isArray(tags)) return tags.map(t => String(t));
+
+  return [];
+}
+
+// ------------------- Ensure DB table exists -------------------
 async function prepareDB() {
   if (!tableCreated) {
     await ensureTableExists();
@@ -64,16 +85,10 @@ export const createBlog = [
     const data = req.body as Omit<Blog, 'id'>;
     data.image = imageUrl;
 
-    // Parse tags if sent as string
-    if (typeof data.tags === 'string') {
-      try {
-        data.tags = JSON.parse(data.tags);
-      } catch {
-        data.tags = [];
-      }
-    }
+    // ✅ Parse tags safely
+    data.tags = parseTags(data.tags);
 
-    // Validate required fields
+    // ------------------- Validate required fields -------------------
     const requiredFields: (keyof Omit<Blog, 'id'>)[] = [
       'slug', 'title', 'description', 'tags', 'author',
       'category', 'featured', 'image', 'publishedDate',
@@ -114,7 +129,6 @@ export const updateBlog = [
     if (file) {
       try {
         imageUrl = await uploadToR2(file.buffer, file.originalname);
-        // Optionally delete old image
         if (existingBlog.image) await deleteFromR2(existingBlog.image);
       } catch (err) {
         console.error(err);
@@ -125,14 +139,8 @@ export const updateBlog = [
     const data = req.body as Partial<Omit<Blog, 'id'>>;
     data.image = imageUrl;
 
-    // Parse tags if sent as string
-    if (data.tags && typeof data.tags === 'string') {
-      try {
-        data.tags = JSON.parse(data.tags);
-      } catch {
-        data.tags = existingBlog.tags;
-      }
-    }
+    // ✅ Parse tags safely (fallback to existing tags if undefined)
+    data.tags = parseTags(data.tags ?? existingBlog.tags);
 
     try {
       const updated = await blogModel.update(id, data);
@@ -156,7 +164,6 @@ export const deleteBlog = async (req: Request, res: Response) => {
   if (!existingBlog) return res.status(404).json({ error: 'Blog not found' });
 
   try {
-    // Delete image from R2 if exists
     if (existingBlog.image) await deleteFromR2(existingBlog.image);
 
     const success = await blogModel.delete(id);
